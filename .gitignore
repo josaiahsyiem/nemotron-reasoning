@@ -2,6 +2,8 @@
 .env
 # Data — never upload competition data
 *.csv
+# Generated traces — derived from competition data, keep local
+*.jsonl
 
 # Python junk
 __pycache__/
