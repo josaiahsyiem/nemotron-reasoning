@@ -47,3 +47,23 @@ Support: `vcd/data.py`, `vcd/detect.py`, `vcd/vocab.py`, `vcd/verify/extract.py`
    - If it fits: train free on Kaggle -> late submit -> real comparable score
    - If not: rent an A100 for a few hours (~$10-30) as fallback
 4. Phase 4: benchmark (vLLM latency/throughput/VRAM) + late submission
+
+## Proven training recipe (extracted from the 0.72 CoT notebook)
+The notebooks trained on the RTX PRO 6000 Blackwell GPU in FULL bf16 (no
+quantization). We adapt the SAME recipe but add 4-bit QLoRA to fit smaller GPUs.
+
+Confirmed hyperparameters from the notebook:
+- LoRA rank = 32, alpha = 32
+- target modules: in_proj, out_proj, up_proj, down_proj (or "all-linear")
+- per_device_train_batch_size = 1
+- gradient_accumulation_steps = 8
+- num_train_epochs = 2
+- max_length = 4096
+- learning_rate = 1e-4, cosine scheduler, warmup 0.05
+- gradient_checkpointing = ON
+- device_map = "auto"
+
+Our adaptation for smaller hardware:
+- ADD 4-bit quantization (QLoRA) via Unsloth or bitsandbytes
+- Keep everything else the same as above
+- bf16 on Blackwell/A100; use fp16 or Unsloth's handling on T4
