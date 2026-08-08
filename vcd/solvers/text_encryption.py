@@ -1,16 +1,24 @@
 """Solver for text encryption puzzles (substitution cipher).
 
-Example: "trb wzrswvog hffk" decrypts to "cat imagines book".
-Answers are lowercase English words separated by single spaces.
+Cracks the cipher fully in Python:
+  1. Build the letter-substitution key from the example pairs
+  2. Decode the target word by word
+  3. Fill single-letter gaps using the harvested vocabulary
+  4. Leave genuinely-ambiguous words as '?' for the model to finish
 
-verify: exact match, case/space-insensitive.
-augment_prompt: builds the letter-substitution key from the example pairs,
-    decodes what it can, and hands the model a near-complete answer to finish.
-    Python does the mechanical decoding; the model fills letters the examples
-    didn't cover, using English word knowledge.
+generate_trace() produces a worked-example reasoning trace ending in
+\\boxed{answer} — used as training data so the model learns the method.
 """
 
 import re
+
+_VOCAB = set()
+
+
+def set_vocab(vocab):
+    """Provide the word list used to fill cipher gaps."""
+    global _VOCAB
+    _VOCAB = set(w.lower() for w in vocab)
 
 
 def _normalize(text):
@@ -20,43 +28,49 @@ def _normalize(text):
 
 
 def _parse_examples(prompt):
-    """Pull (cipher, plain) pairs from the 'cipher -> plain' example lines."""
     pairs = []
     for line in prompt.splitlines():
         if "->" in line:
             left, right = line.split("->", 1)
-            cipher = left.strip()
-            plain = right.strip()
-            # skip the 'Now, decrypt...' line and anything without real text
-            if cipher and plain and "decrypt" not in cipher.lower():
-                pairs.append((cipher, plain))
+            c, p = left.strip(), right.strip()
+            if c and p and "decrypt" not in c.lower():
+                pairs.append((c, p))
     return pairs
 
 
 def _build_key(pairs):
-    """Align example pairs letter-by-letter to build cipher->plain map."""
     key = {}
     for cipher, plain in pairs:
         cw, pw = cipher.split(), plain.split()
         if len(cw) != len(pw):
             continue
-        for c_word, p_word in zip(cw, pw):
-            if len(c_word) != len(p_word):
+        for cwd, pwd in zip(cw, pw):
+            if len(cwd) != len(pwd):
                 continue
-            for c_ch, p_ch in zip(c_word, p_word):
-                key[c_ch] = p_ch
+            for c, p in zip(cwd, pwd):
+                key[c] = p
     return key
 
 
 def _find_target(prompt):
-    """Extract the phrase after 'Now, decrypt the following text:'."""
     m = re.search(r"decrypt the following text:\s*(.+)", prompt, re.IGNORECASE)
     return m.group(1).strip() if m else ""
 
 
-def _decode(text, key):
-    """Apply key; unknown letters become '?'."""
-    return "".join(" " if ch == " " else key.get(ch, "?") for ch in text)
+def _decode_word(cword, key):
+    return "".join(key.get(c, "?") for c in cword)
+
+
+def _fill(pattern):
+    """Resolve a '?'-containing pattern to a unique vocab word, or leave it.
+    Returns (result, how, candidates)."""
+    if "?" not in pattern:
+        return pattern, "direct", []
+    rx = re.compile("^" + pattern.replace("?", ".") + "$")
+    matches = [w for w in _VOCAB if rx.match(w)]
+    if len(matches) == 1:
+        return matches[0], "unique", matches
+    return pattern, "ambiguous", matches
 
 
 class TextEncryptionSolver:
@@ -67,28 +81,36 @@ class TextEncryptionSolver:
             return False
         return _normalize(predicted) == _normalize(answer)
 
-    def augment_prompt(self, prompt):
-        """Add a decoded-cipher hint to help the model solve reliably."""
+    def crack(self, prompt):
+        """Return (decoded_string, key, steps) — the full solve."""
         pairs = _parse_examples(prompt)
         target = _find_target(prompt)
-        if not pairs or not target:
-            return prompt  # can't parse — leave prompt unchanged
-
         key = _build_key(pairs)
-        partial = _decode(target, key)
 
-        # format the letter key readably
+        words, steps = [], []
+        for cw in target.split():
+            raw = _decode_word(cw, key)
+            filled, how, cands = _fill(raw)
+            words.append(filled)
+            if how == "direct":
+                steps.append(f"'{cw}' -> '{filled}'")
+            elif how == "unique":
+                steps.append(
+                    f"'{cw}' -> '{raw}' -> '{filled}' (only fitting word)")
+            else:
+                opts = " or ".join(cands) if cands else "unknown"
+                steps.append(
+                    f"'{cw}' -> '{raw}' (candidates: {opts}; pick by context)")
+        return " ".join(words), key, steps
+
+    def generate_trace(self, prompt):
+        """Produce a worked-example reasoning trace for training data."""
+        decoded, key, steps = self.crack(prompt)
         key_str = ", ".join(f"{c}->{p}" for c, p in sorted(key.items()))
-
-        hint = (
-            "\n\nThis is a letter-substitution cipher. The letters have already "
-            "been decoded for you using the example mappings. "
-            f"The decoded text is: '{partial}'\n"
-            "The only unknowns are the '?' characters (letters not in the examples). "
-            "The rest of the decoding is CORRECT and must NOT be changed. "
-            "Keep every decoded letter exactly as shown, and replace ONLY each '?' "
-            "with the single letter that makes a valid English word. "
-            "For example, 'wi?ard' becomes 'wizard', '?oo?' becomes 'book'. "
-            "Do not rewrite or re-guess whole words."
+        trace = (
+            f"This is a letter-substitution cipher. From the examples, "
+            f"the letter mapping is: {key_str}. "
+            f"Decoding the target word by word: " + "; ".join(steps) + ". "
+            f"Therefore the answer is \\boxed{{{decoded}}}."
         )
-        return prompt + hint
+        return trace, decoded
