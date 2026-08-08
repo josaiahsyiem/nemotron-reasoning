@@ -37,5 +37,13 @@ Support: `vcd/data.py`, `vcd/detect.py`, `vcd/vocab.py`, `vcd/verify/extract.py`
 ## Next steps
 1. Generate full verified dataset: run all 6 solvers across train.csv, keep correct
 2. Combine + sample per-type (like notebook: ~300-700 per type)
-3. Phase 3: train LoRA on Nemotron-30B-A3B  <-- NEEDS competition GPU (unconfirmed)
-4. Phase 4: benchmark (vLLM latency/throughput/VRAM) + late submission for real score
+3. Phase 3: train LoRA on Nemotron-30B-A3B
+   - GPU finding: competition Blackwell GPU is GONE (only T4x2 / P100 free now)
+   - BUT late submission WORKS (button confirmed) -> can still get a real score
+   - FREE PATH TO TRY: Unsloth has day-0 support for Nemotron-3-Nano-30B.
+     It's a MoE (only ~3B active), runs on 24GB. With 4-bit QLoRA it MIGHT
+     fit on free T4x2 (32GB). Borderline but worth attempting.
+     Ref: unsloth.ai/docs/models/nemotron-3
+   - If it fits: train free on Kaggle -> late submit -> real comparable score
+   - If not: rent an A100 for a few hours (~$10-30) as fallback
+4. Phase 4: benchmark (vLLM latency/throughput/VRAM) + late submission
