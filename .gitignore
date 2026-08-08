@@ -1,0 +1,13 @@
+# Data — never upload competition data
+*.csv
+
+# Python junk
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Model files — too big for git
+*.safetensors
+*.bin
+*.pt
