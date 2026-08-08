@@ -1,3 +1,5 @@
+# Secrets — never upload API keys
+.env
 # Data — never upload competition data
 *.csv
 
