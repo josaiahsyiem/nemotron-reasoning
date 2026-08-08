@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verified-CoT Distillation — Pipeline</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;450;500;600&display=swap');
+
+  :root{
+    --paper:#0e1116;
+    --panel:#161b22;
+    --panel-2:#1c232d;
+    --line:#2b3441;
+    --line-soft:#232b35;
+    --ink:#e7edf3;
+    --ink-dim:#9aa7b4;
+    --ink-faint:#66727f;
+    /* compute tiers */
+    --free:#5ec8a0;        /* runs anywhere / free */
+    --free-bg:rgba(94,200,160,.09);
+    --gpu:#ff7a5c;         /* needs the big GPU */
+    --gpu-bg:rgba(255,122,92,.10);
+    --api:#7aa2ff;         /* needs an LLM to generate */
+    --api-bg:rgba(122,162,255,.10);
+    --gold:#e8b45c;
+    --gold-bg:rgba(232,180,92,.10);
+    --radius:4px;
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;background:var(--paper);color:var(--ink);
+    font-family:'Inter',sans-serif;line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    background-image:
+      linear-gradient(var(--line-soft) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+    background-size:44px 44px;
+    background-position:-1px -1px;
+  }
+
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px 100px;}
+
+  /* ---------- header ---------- */
+  header{padding:64px 0 40px;border-bottom:1px solid var(--line);}
+  .eyebrow{
+    font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.28em;
+    text-transform:uppercase;color:var(--ink-faint);margin-bottom:22px;
+    display:flex;align-items:center;gap:12px;
+  }
+  .eyebrow::before{content:"";width:28px;height:1px;background:var(--ink-faint);}
+  h1{
+    font-family:'Space Grotesk',sans-serif;font-weight:700;
+    font-size:clamp(32px,5vw,52px);line-height:1.02;letter-spacing:-.02em;
+    margin:0 0 18px;
+  }
+  h1 .accent{color:var(--free);}
+  .lede{font-size:16px;color:var(--ink-dim);max-width:640px;margin:0;}
+  .lede code{
+    font-family:'JetBrains Mono',monospace;font-size:13px;
+    background:var(--panel-2);padding:1px 6px;border-radius:3px;color:var(--ink);
+  }
+
+  /* ---------- legend ---------- */
+  .legend{
+    display:flex;flex-wrap:wrap;gap:10px;margin-top:34px;
+  }
+  .chip{
+    font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;
+    letter-spacing:.04em;padding:7px 12px;border-radius:100px;
+    display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);
+    background:var(--panel);
+  }
+  .dot{width:8px;height:8px;border-radius:50%;flex:none;}
+  .dot.free{background:var(--free);}
+  .dot.api{background:var(--api);}
+  .dot.gpu{background:var(--gpu);}
+  .dot.gold{background:var(--gold);}
+
+  /* ---------- phase ---------- */
+  .phase{margin-top:56px;}
+  .phase-head{
+    display:flex;align-items:baseline;gap:16px;margin-bottom:6px;
+  }
+  .phase-num{
+    font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;
+    color:var(--ink-faint);letter-spacing:.1em;
+  }
+  .phase-title{
+    font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:22px;
+    letter-spacing:-.01em;margin:0;
+  }
+  .phase-note{
+    font-size:13.5px;color:var(--ink-dim);margin:0 0 22px;padding-left:34px;
+  }
+
+  /* ---------- step cards ---------- */
+  .steps{position:relative;padding-left:34px;}
+  /* vertical spine */
+  .steps::before{
+    content:"";position:absolute;left:5px;top:8px;bottom:8px;width:1px;
+    background:linear-gradient(var(--line),var(--line-soft));
+  }
+  .step{
+    position:relative;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--radius);padding:18px 20px;margin-bottom:14px;
+    transition:border-color .18s ease,transform .18s ease;
+  }
+  .step:hover{border-color:var(--tier,var(--line));transform:translateX(2px);}
+  /* node on the spine */
+  .step::before{
+    content:"";position:absolute;left:-31px;top:22px;width:11px;height:11px;
+    border-radius:50%;background:var(--paper);
+    border:2px solid var(--tier,var(--ink-faint));
+  }
+  .step-top{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;}
+  .step-id{
+    font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;
+    color:var(--tier,var(--ink-faint));flex:none;padding-top:1px;min-width:34px;
+  }
+  .step-body{flex:1 1 340px;min-width:0;}
+  .step-name{
+    font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;
+    margin:0 0 5px;letter-spacing:-.005em;
+  }
+  .step-desc{font-size:13.5px;color:var(--ink-dim);margin:0;}
+  .step-desc b{color:var(--ink);font-weight:600;}
+  .step-file{
+    font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-faint);
+    margin-top:8px;display:inline-block;
+    background:var(--panel-2);padding:2px 8px;border-radius:3px;
+    border:1px solid var(--line-soft);
+  }
+  .step-tier{
+    font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;
+    letter-spacing:.1em;text-transform:uppercase;padding:4px 10px;border-radius:100px;
+    flex:none;align-self:flex-start;white-space:nowrap;
+  }
+  .t-free{--tier:var(--free);color:var(--free);background:var(--free-bg);border:1px solid rgba(94,200,160,.25);}
+  .t-api {--tier:var(--api); color:var(--api); background:var(--api-bg); border:1px solid rgba(122,162,255,.25);}
+  .t-gpu {--tier:var(--gpu); color:var(--gpu); background:var(--gpu-bg); border:1px solid rgba(255,122,92,.25);}
+
+  .step.tier-free{--tier:var(--free);}
+  .step.tier-api{--tier:var(--api);}
+  .step.tier-gpu{--tier:var(--gpu);}
+
+  /* differentiator flag */
+  .flag{
+    margin-top:12px;padding:10px 12px;border-radius:3px;
+    background:var(--gold-bg);border:1px solid rgba(232,180,92,.28);
+    font-size:12.5px;color:var(--ink);display:flex;gap:9px;align-items:flex-start;
+  }
+  .flag .star{color:var(--gold);font-family:'JetBrains Mono',monospace;font-weight:700;flex:none;}
+  .flag b{color:var(--gold);font-weight:600;}
+
+  /* the verify loop callout */
+  .loop{
+    border-style:dashed;border-color:var(--free);
+    background:linear-gradient(180deg,var(--free-bg),var(--panel));
+  }
+  .loop .step-name::after{
+    content:"↻ loop";font-family:'JetBrains Mono',monospace;font-size:10px;
+    color:var(--free);margin-left:10px;letter-spacing:.08em;vertical-align:middle;
+    border:1px solid rgba(94,200,160,.35);padding:1px 6px;border-radius:100px;
+  }
+
+  /* ---------- output panel ---------- */
+  .output{
+    margin-top:60px;border:1px solid var(--line);border-radius:var(--radius);
+    background:linear-gradient(180deg,var(--panel-2),var(--panel));
+    padding:30px 28px;
+  }
+  .output h3{
+    font-family:'Space Grotesk',sans-serif;font-size:18px;margin:0 0 4px;font-weight:600;
+  }
+  .output p.sub{font-size:13px;color:var(--ink-dim);margin:0 0 22px;}
+  .deliv{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;}
+  .deliv-item{
+    background:var(--paper);border:1px solid var(--line-soft);border-radius:3px;padding:14px 15px;
+  }
+  .deliv-item .k{
+    font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;
+  }
+  .deliv-item .v{font-size:13.5px;color:var(--ink);font-weight:450;}
+  .deliv-item .v b{font-family:'Space Grotesk',sans-serif;}
+
+  /* ablation mini table */
+  .ablation{margin-top:22px;border-top:1px solid var(--line-soft);padding-top:20px;}
+  .ablation .cap{
+    font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--ink-faint);margin-bottom:12px;
+  }
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line-soft);}
+  th{
+    font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:600;
+    letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);
+  }
+  td{color:var(--ink-dim);}
+  td.metric{font-family:'JetBrains Mono',monospace;color:var(--ink);font-weight:500;}
+  tr:last-child td{border-bottom:none;}
+  tr.win td.metric{color:var(--free);}
+  tr.win td:first-child{color:var(--ink);font-weight:500;}
+
+  footer{
+    margin-top:46px;padding-top:24px;border-top:1px solid var(--line);
+    font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-faint);
+    display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;
+  }
+  footer .honest{color:var(--ink-dim);max-width:640px;}
+
+  @media(max-width:560px){
+    .step-tier{margin-top:2px;}
+    .phase-note{padding-left:0;}
+    .steps{padding-left:26px;}
+    .step::before{left:-23px;}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none!important;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Reasoning LoRA · build blueprint</div>
+    <h1>Verified-CoT <span class="accent">Distillation</span><br>Pipeline</h1>
+    <p class="lede">Your own end-to-end pipeline for the Nemotron reasoning challenge. Generate chain-of-thought traces, <b>keep only the ones that verify correct</b>, distill them into a LoRA, then serve and benchmark it. The colour of each block tells you what it costs to run — the whole left column is free.</p>
+
+    <div class="legend">
+      <span class="chip"><span class="dot free"></span>FREE — CPU / free Kaggle</span>
+      <span class="chip"><span class="dot api"></span>LLM — API or one GPU pass</span>
+      <span class="chip"><span class="dot gpu"></span>GPU — rented / competition Blackwell</span>
+      <span class="chip"><span class="dot gold"></span>your differentiator</span>
+    </div>
+  </header>
+
+  <!-- ============ PHASE 0 ============ -->
+  <section class="phase">
+    <div class="phase-head">
+      <span class="phase-num">P0</span>
+      <h2 class="phase-title">Foundation</h2>
+    </div>
+    <p class="phase-note">Scaffold the repo as a library, not a notebook. Everything downstream plugs into one interface.</p>
+    <div class="steps">
+
+      <div class="step tier-free">
+        <div class="step-top">
+          <span class="step-id">0.1</span>
+          <div class="step-body">
+            <p class="step-name">Repo scaffold + config</p>
+            <p class="step-desc">Package layout under <b>src/vcd/</b>, all hyperparameters in <b>configs/default.yaml</b> — no magic numbers in code. This structure is what separates "my project" from "a fork."</p>
+            <span class="step-file">pyproject.toml · configs/default.yaml</span>
+          </div>
+          <span class="step-tier t-free">free</span>
+        </div>
+      </div>
+
+      <div class="step tier-free">
+        <div class="step-top">
+          <span class="step-id">0.2</span>
+          <div class="step-body">
+            <p class="step-name">Data load + type-stratified split</p>
+            <p class="step-desc">Load <b>train.csv</b>, split by puzzle <b>type</b> so no type leaks across train/val. Mirrors your station-grouped-CV instinct from the soil-moisture work.</p>
+            <span class="step-file">src/vcd/data/load.py · tests/test_load.py</span>
+          </div>
+          <span class="step-tier t-free">free</span>
+        </div>
+      </div>
+
+      <div class="step tier-free">
+        <div class="step-top">
+          <span class="step-id">0.3</span>
+          <div class="step-body">
+            <p class="step-name">Solver interface (the spine)</p>
+            <p class="step-desc">An abstract base class every puzzle type implements: <b>augment_prompt()</b> injects type-specific hints, <b>verify()</b> checks a predicted answer against ground truth. Everything else hangs off this ABC.</p>
+            <span class="step-file">src/vcd/solvers/base.py</span>
+          </div>
+          <span class="step-tier t-free">free</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ PHASE 1 ============ -->
+  <section class="phase">
+    <div class="phase-head">
+      <span class="phase-num">P1</span>
+      <h2 class="phase-title">Per-type solvers</h2>
+    </div>
+    <p class="phase-note">Six puzzle types, six implementations of the interface. This is where accuracy is actually won — and where your original contribution lives.</p>
+    <div class="steps">
+
+      <div class="step tier-free">
+        <div class="step-top">
+          <span class="step-id">1.1</span>
+          <div class="step-body">
+            <p class="step-name">Easy solvers — numeral, unit, gravitational</p>
+            <p class="step-desc">Prove the interface on the high-pass-rate types first. <b>verify()</b> = numeric tolerance (±0.5% rel) or exact-string match. Fast wins that validate the ABC before the hard work.</p>
+            <span class="step-file">numeral.py · unit_conversion.py · grav_constant.py</span>
+          </div>
+          <span class="step-tier t-free">free</span>
+        </div>
+      </div>
+
+      <div class="step tier-free">
+        <div class="step-top">
+          <span class="step-id">1.2</span>
+          <div class="step-body">
+            <p class="step-name">Text-encryption solver — cipher dictionary</p>
+            <p class="step-desc">Monoalphabetic substitution over a fixed vocabulary. <b>augment_prompt()</b> embeds the known word→cipher mapping so the model isn't guessing letters blind. Reimplemented from the idea, your code.</p>
+            <span class="step-file">src/vcd/solvers/text_encryption.py</span>
+          </div>
+          <span class="step-tier t-free">free</span>
+        </div>
+      </div>
+
+      <div class="step tier-free">
+        <div class="step-top">
+          <span class="step-id">1.3</span>
+          <div class="step-body">
+            <p class="step-name">Bit-manipulation solver — per-bit boolean analysis</p>
+            <p class="step-desc">Each output bit is a boolean function of 1–3 input bits. <b>augment_prompt()</b> enumerates candidate functions per bit and flags CERTAIN vs AMBIGUOUS. The hard type — expect a low pass rate, keep every correct trace.</p>
+            <span class="step-file">src/vcd/solvers/bit_manipulation.py</span>
+          </div>
+          <span class="step-tier t-free">free</span>
+        </div>
+      </div>
+
+      <div class="step loop tier-free">
+        <div class="step-top">
+          <span class="step-id">1.4</span>
+          <div class="step-body">
+            <p class="step-name">Equation-transformation solver</p>
+            <p class="step-desc">The worst-performing type in the whole competition (~13.6% pass) that <b>no public notebook ever built a solver for.</b> Parse the transformation rule, apply it symbolically, verify. This is the block that makes the project yours.</p>
+            <span class="step-file">src/vcd/solvers/equation_transform.py</span>
+            <div class="flag">
+              <span class="star">★</span>
+              <span><b>Your differentiator.</b> Close even part of this gap and you have code + a result that exists in no notebook you read — the difference between "inspired by" and "forked from."</span>
+            </div>
+          </div>
+          <span class="step-tier t-free">free</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ PHASE 2 ============ -->
+  <section class="phase">
+    <div class="phase-head">
+      <span class="phase-num">P2</span>
+      <h2 class="phase-title">Verified-CoT distillation</h2>
+    </div>
+    <p class="phase-note">The core loop: generate reasoning, throw away anything that gets the answer wrong. Quality over quantity — this is the whole thesis.</p>
+    <div class="steps">
+
+      <div class="step tier-api">
+        <div class="step-top">
+          <span class="step-id">2.1</span>
+          <div class="step-body">
+            <p class="step-name">Generate CoT traces</p>
+            <p class="step-desc">Run each solver-augmented prompt through an LLM at <b>temperature ≈ 0.7</b> to produce reasoning. This is the one data-prep step that needs an LLM — an API key or a single GPU pass, your choice.</p>
+            <span class="step-file">src/vcd/generate/cot_generate.py</span>
+          </div>
+          <span class="step-tier t-api">llm</span>
+        </div>
+      </div>
+
+      <div class="step loop tier-free">
+        <div class="step-top">
+          <span class="step-id">2.2</span>
+          <div class="step-body">
+            <p class="step-name">Verify + filter</p>
+            <p class="step-desc">Extract the answer from <b>\boxed{}</b>, route it to the matching <b>solver.verify()</b>, and <b>keep only correct traces.</b> This rejection-sampling step is what turns noisy generation into clean training data.</p>
+            <span class="step-file">src/vcd/verify/filter.py</span>
+          </div>
+          <span class="step-tier t-free">free</span>
+        </div>
+      </div>
+
+      <div class="step loop tier-free">
+        <div class="step-top">
+          <span class="step-id">2.3</span>
+          <div class="step-body">
+            <p class="step-name">Token-budget compression</p>
+            <p class="step-desc">Any trace over the token budget (~7,600, leaving room for the <b>&lt;/think&gt;\boxed{}</b> suffix) gets re-sent to the LLM to shorten by the overflow %, preserving the answer. Fits the reasoning inside the model's window.</p>
+            <span class="step-file">src/vcd/generate/compress.py</span>
+          </div>
+          <span class="step-tier t-api">llm</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ PHASE 3 ============ -->
+  <section class="phase">
+    <div class="phase-head">
+      <span class="phase-num">P3</span>
+      <h2 class="phase-title">Train the LoRA</h2>
+    </div>
+    <p class="phase-note">The only phase that truly needs the big GPU. Everything upstream is tested before you spend a rupee of paid compute.</p>
+    <div class="steps">
+
+      <div class="step tier-gpu">
+        <div class="step-top">
+          <span class="step-id">3.1</span>
+          <div class="step-body">
+            <p class="step-name">Blackwell / Triton env fixes</p>
+            <p class="step-desc">Isolated, <b>documented</b> plumbing: pure-PyTorch RMSNorm to dodge the broken Triton kernel, relocate <b>ptxas-blackwell</b> to a writable path, force the model's slow path. Understanding <em>why</em> each hack exists is itself an interview flex.</p>
+            <span class="step-file">src/vcd/train/env_fixes.py</span>
+          </div>
+          <span class="step-tier t-gpu">gpu</span>
+        </div>
+      </div>
+
+      <div class="step tier-gpu">
+        <div class="step-top">
+          <span class="step-id">3.2</span>
+          <div class="step-body">
+            <p class="step-name">Build SFT dataset</p>
+            <p class="step-desc">Turn verified traces into chat records: <b>user</b> = prompt + boxed-answer suffix, <b>assistant</b> = CoT + <b>&lt;/think&gt;\boxed{answer}</b>. Strip stray boxed tags from the body, re-append the canonical one. Loss masked to assistant tokens.</p>
+            <span class="step-file">src/vcd/train/dataset.py</span>
+          </div>
+          <span class="step-tier t-gpu">gpu</span>
+        </div>
+      </div>
+
+      <div class="step tier-gpu">
+        <div class="step-top">
+          <span class="step-id">3.3</span>
+          <div class="step-body">
+            <p class="step-name">LoRA fine-tune</p>
+            <p class="step-desc">PEFT + TRL <b>SFTTrainer</b>. Rank 32 / alpha 32, target the projection modules, bf16, gradient checkpointing, cosine schedule, 1–2 epochs. Run 2–3 rank configs so you have an ablation, not a single number.</p>
+            <span class="step-file">src/vcd/train/train_lora.py</span>
+          </div>
+          <span class="step-tier t-gpu">gpu</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ PHASE 4 ============ -->
+  <section class="phase">
+    <div class="phase-head">
+      <span class="phase-num">P4</span>
+      <h2 class="phase-title">Serve, benchmark, ship</h2>
+    </div>
+    <p class="phase-note">The layer none of the three notebooks have — and exactly the production evidence your resume was missing.</p>
+    <div class="steps">
+
+      <div class="step tier-free">
+        <div class="step-top">
+          <span class="step-id">4.1</span>
+          <div class="step-body">
+            <p class="step-name">SVD rank-compression (optional)</p>
+            <p class="step-desc">If a merge pushes fused-projection LoRA ranks over 32, reconstruct <b>Δ = B·A</b>, SVD, truncate to rank 32, redistribute <b>√S</b>. Include it as a standalone module — it's a clean proof you understand LoRA math.</p>
+            <span class="step-file">src/vcd/merge/svd_compress.py</span>
+          </div>
+          <span class="step-tier t-free">free</span>
+        </div>
+      </div>
+
+      <div class="step tier-gpu">
+        <div class="step-top">
+          <span class="step-id">4.2</span>
+          <div class="step-body">
+            <p class="step-name">vLLM serve + inference benchmark</p>
+            <p class="step-desc">Serve the merged model on vLLM; sweep concurrency 1→64 and record <b>TTFT, p50/p95 latency, tokens/sec, and peak VRAM.</b> This table is your headline MLOps result — no competitor notebook measures serving.</p>
+            <span class="step-file">src/vcd/infer/vllm_serve.py · infer/benchmark.py</span>
+          </div>
+          <span class="step-tier t-gpu">gpu</span>
+        </div>
+      </div>
+
+      <div class="step tier-free">
+        <div class="step-top">
+          <span class="step-id">4.3</span>
+          <div class="step-body">
+            <p class="step-name">Package submission + push to GitHub</p>
+            <p class="step-desc">Zip the adapter (rewrite <b>adapter_config.json</b>: base model, inference_mode, dropout 0), then ship the repo: README with the ablation table + benchmark plots, per-solver unit tests, one honest line crediting the community ideas.</p>
+            <span class="step-file">src/vcd/package/make_submission.py · README.md</span>
+          </div>
+          <span class="step-tier t-free">free</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ OUTPUT ============ -->
+  <section class="output">
+    <h3>What you end up with</h3>
+    <p class="sub">A repo that reads as engineering, plus the two results that make it defensible.</p>
+
+    <div class="deliv">
+      <div class="deliv-item">
+        <div class="k">Artifact</div>
+        <div class="v"><b>Trained LoRA adapter</b> + submission.zip validated on the benchmark</div>
+      </div>
+      <div class="deliv-item">
+        <div class="k">Result 1 · accuracy</div>
+        <div class="v"><b>Ablation table</b> — baseline → CoT → verified → +solvers, per type</div>
+      </div>
+      <div class="deliv-item">
+        <div class="k">Result 2 · systems</div>
+        <div class="v"><b>vLLM benchmark</b> — latency, throughput, VRAM across a concurrency sweep</div>
+      </div>
+      <div class="deliv-item">
+        <div class="k">Signal</div>
+        <div class="v"><b>Per-solver unit tests</b> — testable ML systems, not a one-off script</div>
+      </div>
+    </div>
+
+    <div class="ablation">
+      <div class="cap">Ablation table — the shape you're filling in (illustrative)</div>
+      <table>
+        <thead>
+          <tr><th>Variant</th><th>Data</th><th>What it isolates</th><th>Score</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Direct answer</td><td class="metric">~600</td><td>no reasoning baseline</td><td class="metric">—</td></tr>
+          <tr><td>CoT, unfiltered</td><td class="metric">~9k</td><td>reasoning, but noisy</td><td class="metric">—</td></tr>
+          <tr><td>CoT, verified</td><td class="metric">~2.9k</td><td>quality-over-quantity gain</td><td class="metric">—</td></tr>
+          <tr class="win"><td>CoT verified + your solvers</td><td class="metric">~2.9k</td><td>the equation-transform gap</td><td class="metric">▲ your number</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <span>vcd · verified-cot-distill</span>
+    <span class="honest">Ideas credited: verified-CoT distillation, per-type solvers, token budgeting, Blackwell plumbing, SVD rank-merge — from the public Nemotron challenge community. All implementation your own.</span>
+  </footer>
+
+</div>
+</body>
+</html>
