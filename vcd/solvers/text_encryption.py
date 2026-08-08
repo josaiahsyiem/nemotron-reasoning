@@ -81,10 +81,14 @@ class TextEncryptionSolver:
         key_str = ", ".join(f"{c}->{p}" for c, p in sorted(key.items()))
 
         hint = (
-            "\n\nHINT: This is a letter substitution cipher. "
-            f"From the examples, the letter mapping is: {key_str}. "
-            f"Applying it to the target gives: '{partial}' "
-            "(where '?' marks letters not seen in the examples). "
-            "Fill any '?' by choosing English words that fit the context."
+            "\n\nThis is a letter-substitution cipher. The letters have already "
+            "been decoded for you using the example mappings. "
+            f"The decoded text is: '{partial}'\n"
+            "The only unknowns are the '?' characters (letters not in the examples). "
+            "The rest of the decoding is CORRECT and must NOT be changed. "
+            "Keep every decoded letter exactly as shown, and replace ONLY each '?' "
+            "with the single letter that makes a valid English word. "
+            "For example, 'wi?ard' becomes 'wizard', '?oo?' becomes 'book'. "
+            "Do not rewrite or re-guess whole words."
         )
         return prompt + hint
