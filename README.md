@@ -4,8 +4,6 @@ An end-to-end pipeline for the NVIDIA Nemotron Reasoning Challenge: generate
 chain-of-thought traces, keep only the ones that verify correct, and distill
 them into a LoRA adapter.
 
-*Approach inspired by public techniques from the Nemotron challenge community
-(verified-CoT distillation, per-type solvers); all implementation is my own.*
 
 ## Results
 
